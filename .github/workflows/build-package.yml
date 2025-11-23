@@ -1,0 +1,91 @@
+name: Check for Updates, Build, and Deploy
+
+on:
+  # Run automatically every day at 08:00 UTC (you can change this)
+  schedule:
+    - cron: '0 8 * * *'
+  # Also allow manual runs for testing
+  workflow_dispatch:
+
+# Grant the workflow permissions to write back to the repository
+permissions:
+  contents: write
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set package directory
+        id: set_vars
+        run: echo "pkg_dir=gephgui-wry-bin" >> $GITHUB_OUTPUT
+
+      - name: Check for new version
+        id: check_version
+        run: |
+          # Get the version from our PKGBUILD file
+          LOCAL_VER=$(grep -Po '^pkgver=\K.*' ${{ steps.set_vars.outputs.pkg_dir }}/PKGBUILD)
+
+          # Get the latest version from the upstream GitHub release
+          # We install jq, a command-line JSON processor
+          sudo apt-get update && sudo apt-get install -y jq
+          UPSTREAM_VER=$(curl -s "https://api.github.com/repos/geph-official/gephgui-pkg/releases/latest" | jq -r '.tag_name' | sed 's/^v//')
+
+          echo "Current version in repo: ${LOCAL_VER}"
+          echo "Latest upstream version: ${UPSTREAM_VER}"
+
+          if [[ "$LOCAL_VER" != "$UPSTREAM_VER" ]]; then
+            echo "New version detected!"
+            echo "new_version_found=true" >> $GITHUB_OUTPUT
+            echo "new_version_tag=${UPSTREAM_VER}" >> $GITHUB_OUTPUT
+          else
+            echo "No new version found."
+            echo "new_version_found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update PKGBUILD if new version was found
+        # This step only runs if the previous step set new_version_found to 'true'
+        if: steps.check_version.outputs.new_version_found == 'true'
+        run: |
+          cd ${{ steps.set_vars.outputs.pkg_dir }}
+
+          # Update the pkgver line with the new version number
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.check_version.outputs.new_version_tag }}/" PKGBUILD
+
+          # Reset the checksums to 'SKIP' so they can be regenerated
+          sed -i "s/sha256sums=.*/sha256sums=('SKIP')/" PKGBUILD
+
+          echo "PKGBUILD updated for version ${{ steps.check_version.outputs.new_version_tag }}"
+
+      - name: Build the package
+        if: steps.check_version.outputs.new_version_found == 'true'
+        id: build
+        uses: ant-jones/makepkg-action@v1
+        with:
+          pkg_dir: ${{ steps.set_vars.outputs.pkg_dir }}
+
+      - name: Commit updated PKGBUILD and deploy
+        if: steps.check_version.outputs.new_version_found == 'true'
+        run: |
+          # Configure git to commit as the 'github-actions' bot
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+          # Commit the updated PKGBUILD (with the correct new checksums)
+          git add ${{ steps.build.outputs.pkgbuild_path }}
+          git commit -m "auto: Update ${{ steps.set_vars.outputs.pkg_dir }} to ${{ steps.check_version.outputs.new_version_tag }}"
+
+          # Push the commit back to the main branch
+          git push
+
+      - name: Deploy to GitHub Pages
+        if: steps.check_version.outputs.new_version_found == 'true'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ${{ steps.build.outputs.repo_dir }}
+          publish_branch: gh-pages
+          keep_files: true
