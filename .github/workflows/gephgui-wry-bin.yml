@@ -1,10 +1,8 @@
-name: Check for Updates, Build, and Deploy
+name: Check for Updates, Build, and Deploy (gephgui-wry-bin)
 
 on:
-  # Run automatically every day at 08:00 UTC
   schedule:
     - cron: '0 8 * * *'
-  # Also allow manual runs for testing
   workflow_dispatch:
 
 permissions:
@@ -26,17 +24,25 @@ jobs:
           echo "pkg_dir=gephgui-wry-bin" >> $GITHUB_OUTPUT
           echo "repo_name=my-repo" >> $GITHUB_OUTPUT
 
-      - name: Install Dependencies
+      - name: Install Build Dependencies and Parse PKGBUILD
+        id: deps
         run: |
-          # Install dependencies needed for the script (jq for version checking, git for committing)
+          # Initialize pacman keyring
           pacman-key --init
           pacman-key --populate archlinux
-          pacman -Syu --noconfirm jq git
+          # Install build tools: jq (for version check), git (for commit), pacman-contrib (for updpkgsums)
+          pacman -Syu --noconfirm jq git pacman-contrib
+          PKGBUILD_DEPS=$(grep -Po '^depends=\K.*' ${{ steps.set_vars.outputs.pkg_dir }}/PKGBUILD | sed "s/[()']//g")
+          echo "Parsed runtime dependencies: ${PKGBUILD_DEPS}"
+          echo "pkg_deps=${PKGBUILD_DEPS}" >> $GITHUB_OUTPUT
+
+      - name: Install Runtime Dependencies
+        run: |
+          pacman -S --noconfirm --needed ${{ steps.deps.outputs.pkg_deps }}
 
       - name: Check for new version
         id: check_version
         run: |
-          # The logic is the same, but now it runs directly inside the Arch container
           LOCAL_VER=$(grep -Po '^pkgver=\K.*' ${{ steps.set_vars.outputs.pkg_dir }}/PKGBUILD)
           UPSTREAM_VER=$(curl -s "https://api.github.com/repos/geph-official/gephgui-pkg/releases/latest" | jq -r '.tag_name' | sed 's/^v//')
 
@@ -58,24 +64,24 @@ jobs:
           cd ${{ steps.set_vars.outputs.pkg_dir }}
           sed -i "s/^pkgver=.*/pkgver=${{ steps.check_version.outputs.new_version_tag }}/" PKGBUILD
           sed -i "s/sha256sums=.*/sha256sums=('SKIP')/" PKGBUILD
-          echo "PKGBUILD updated for version ${{ steps.check_version.outputs.new_version_tag }}"
 
       - name: Build package and create repository
         if: steps.check_version.outputs.new_version_found == 'true'
         run: |
-          # We need to switch to a non-root user to build
           useradd -m builduser
+          # Grant builduser ownership of the current directory
           chown -R builduser:builduser .
 
-          # Switch to the build user to perform the work
+          # Switch to the non-root user to build
           sudo -u builduser bash -c '
             cd ${{ steps.set_vars.outputs.pkg_dir }}
+            # updpkgsums will now work because pacman-contrib is installed
             updpkgsums
-            # makepkg needs fakeroot, which is part of base-devel
-            makepkg --syncdeps --noconfirm --skippgpcheck
+            # makepkg will not ask for a password because dependencies are already installed
+            makepkg --skippgpcheck
           '
 
-          # Prepare the repository structure
+          # Prepare the repository structure (as root)
           mkdir -p repo/x86_64
           mv ${{ steps.set_vars.outputs.pkg_dir }}/*.pkg.tar.zst repo/x86_64/
           repo-add repo/x86_64/${{ steps.set_vars.outputs.repo_name }}.db.tar.gz repo/x86_64/*.pkg.tar.zst
@@ -83,10 +89,8 @@ jobs:
       - name: Commit and Push updated PKGBUILD
         if: steps.check_version.outputs.new_version_found == 'true'
         run: |
-          # Configure git with the bot's identity
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          # This config is needed as the user in the container is different
           git config --global --add safe.directory /github/workspace
 
           git add ${{ steps.set_vars.outputs.pkg_dir }}/PKGBUILD
