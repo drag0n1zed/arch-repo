@@ -1,7 +1,7 @@
 name: Check for Updates, Build, and Deploy
 
 on:
-  # Run automatically every day at 08:00 UTC (you can change this)
+  # Run automatically every day at 08:00 UTC
   schedule:
     - cron: '0 8 * * *'
   # Also allow manual runs for testing
@@ -19,9 +19,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set package directory
+      - name: Set package directory and repo name
         id: set_vars
-        run: echo "pkg_dir=gephgui-wry-bin" >> $GITHUB_OUTPUT
+        run: |
+          echo "pkg_dir=gephgui-wry-bin" >> $GITHUB_OUTPUT
+          echo "repo_name=my-repo" >> $GITHUB_OUTPUT
 
       - name: Check for new version
         id: check_version
@@ -30,7 +32,6 @@ jobs:
           LOCAL_VER=$(grep -Po '^pkgver=\K.*' ${{ steps.set_vars.outputs.pkg_dir }}/PKGBUILD)
 
           # Get the latest version from the upstream GitHub release
-          # We install jq, a command-line JSON processor
           sudo apt-get update && sudo apt-get install -y jq
           UPSTREAM_VER=$(curl -s "https://api.github.com/repos/geph-official/gephgui-pkg/releases/latest" | jq -r '.tag_name' | sed 's/^v//')
 
@@ -47,45 +48,63 @@ jobs:
           fi
 
       - name: Update PKGBUILD if new version was found
-        # This step only runs if the previous step set new_version_found to 'true'
         if: steps.check_version.outputs.new_version_found == 'true'
         run: |
           cd ${{ steps.set_vars.outputs.pkg_dir }}
-
-          # Update the pkgver line with the new version number
           sed -i "s/^pkgver=.*/pkgver=${{ steps.check_version.outputs.new_version_tag }}/" PKGBUILD
-
-          # Reset the checksums to 'SKIP' so they can be regenerated
           sed -i "s/sha256sums=.*/sha256sums=('SKIP')/" PKGBUILD
-
           echo "PKGBUILD updated for version ${{ steps.check_version.outputs.new_version_tag }}"
 
-      - name: Build the package
+      - name: Build package and create repository
         if: steps.check_version.outputs.new_version_found == 'true'
-        id: build
-        uses: ant-jones/makepkg-action@v1
+        # Use an official Arch Linux Docker image to get access to makepkg
+        uses: docker://archlinux:base-devel
         with:
-          pkg_dir: ${{ steps.set_vars.outputs.pkg_dir }}
+          entrypoint: /bin/bash
+          args: -c "
+            # Initialize pacman keyring
+            pacman-key --init
+            pacman-key --populate archlinux
+            pacman -Syu --noconfirm git sudo
 
-      - name: Commit updated PKGBUILD and deploy
+            # Create a non-root user, as makepkg cannot be run as root
+            useradd -m builduser
+            echo 'builduser ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+            chown -R builduser:builduser .
+
+            # Switch to the build user to perform the work
+            sudo -u builduser bash -c '
+              cd ${{ steps.set_vars.outputs.pkg_dir }}
+              # Automatically calculate and update the checksums
+              updpkgsums
+              # Build the package, installing dependencies automatically
+              makepkg --syncdeps --noconfirm --skippgpcheck
+            '
+
+            # Prepare the repository structure for GitHub Pages
+            mkdir -p repo/x86_64
+            mv ${{ steps.set_vars.outputs.pkg_dir }}/*.pkg.tar.zst repo/x86_64/
+
+            # Add the new package to the repository database
+            repo-add repo/x86_64/${{ steps.set_vars.outputs.repo_name }}.db.tar.gz repo/x86_64/*.pkg.tar.zst
+          "
+
+      - name: Commit updated PKGBUILD
         if: steps.check_version.outputs.new_version_found == 'true'
         run: |
-          # Configure git to commit as the 'github-actions' bot
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-
-          # Commit the updated PKGBUILD (with the correct new checksums)
-          git add ${{ steps.build.outputs.pkgbuild_path }}
+          # Add the PKGBUILD that was updated with the correct checksum inside the container
+          git add ${{ steps.set_vars.outputs.pkg_dir }}/PKGBUILD
           git commit -m "auto: Update ${{ steps.set_vars.outputs.pkg_dir }} to ${{ steps.check_version.outputs.new_version_tag }}"
-
-          # Push the commit back to the main branch
           git push
 
-      - name: Deploy to GitHub Pages
+      - name: Deploy repository to GitHub Pages
         if: steps.check_version.outputs.new_version_found == 'true'
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ${{ steps.build.outputs.repo_dir }}
+          # The 'repo' directory was created and populated in the build step
+          publish_dir: repo
           publish_branch: gh-pages
           keep_files: true
