@@ -1,7 +1,7 @@
 # Maintainer: Geph Team <contact@geph.io>
 # Contributor: drag <drag0n1zed@outlook.com>
 pkgname=gephgui-wry-bin
-pkgver=0.0.1
+pkgver=5.3.1
 pkgrel=1
 pkgdesc="The desktop GUI for Geph (pre-compiled binary)"
 arch=('x86_64')
@@ -11,7 +11,7 @@ depends=('webkit2gtk')
 provides=('gephgui-wry')
 conflicts=('gephgui-wry' 'gephgui-wry-git')
 source=("https://github.com/geph-official/gephgui-pkg/releases/download/v${pkgver}/gephgui-wry_${pkgver}_amd64.deb")
-sha256sums=('9c933973952f4c7847053c5163f5387413a968a3f80c657579f15049a4f2165c')
+sha256sums=('5f02454b1af0b0ed9d27083ef3b83830b335cff15ad8617b7603864091fd00f1')
 
 package() {
   tar -xf "${srcdir}/data.tar.zst" -C "${pkgdir}/"
