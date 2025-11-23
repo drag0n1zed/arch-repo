@@ -7,13 +7,17 @@ on:
   # Also allow manual runs for testing
   workflow_dispatch:
 
-# Grant the workflow permissions to write back to the repository
 permissions:
   contents: write
 
 jobs:
   check-and-build:
     runs-on: ubuntu-latest
+    # --- THIS IS THE KEY CHANGE ---
+    # We define the container for the entire job here.
+    # All 'run' steps will now execute inside Arch Linux.
+    container:
+      image: archlinux:base-devel
 
     steps:
       - name: Check out repository
@@ -25,11 +29,18 @@ jobs:
           echo "pkg_dir=gephgui-wry-bin" >> $GITHUB_OUTPUT
           echo "repo_name=my-repo" >> $GITHUB_OUTPUT
 
+      - name: Install Dependencies
+        run: |
+          # Install dependencies needed for the script (jq for version checking, git for committing)
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm jq git
+
       - name: Check for new version
         id: check_version
         run: |
+          # The logic is the same, but now it runs directly inside the Arch container
           LOCAL_VER=$(grep -Po '^pkgver=\K.*' ${{ steps.set_vars.outputs.pkg_dir }}/PKGBUILD)
-          sudo apt-get update && sudo apt-get install -y jq
           UPSTREAM_VER=$(curl -s "https://api.github.com/repos/geph-official/gephgui-pkg/releases/latest" | jq -r '.tag_name' | sed 's/^v//')
 
           echo "Current version in repo: ${LOCAL_VER}"
@@ -54,50 +65,40 @@ jobs:
 
       - name: Build package and create repository
         if: steps.check_version.outputs.new_version_found == 'true'
-        uses: docker://archlinux:base-devel
-        with:
-          entrypoint: /bin/bash
-          # Using a literal block scalar '|' to ensure the script is treated as a single string
-          args: |
-            -c '
-              # Initialize pacman keyring
-              pacman-key --init
-              pacman-key --populate archlinux
-              pacman -Syu --noconfirm git sudo
+        run: |
+          # We need to switch to a non-root user to build
+          useradd -m builduser
+          chown -R builduser:builduser .
 
-              # Create a non-root user, as makepkg cannot be run as root
-              useradd -m builduser
-              echo "builduser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-              chown -R builduser:builduser .
+          # Switch to the build user to perform the work
+          sudo -u builduser bash -c '
+            cd ${{ steps.set_vars.outputs.pkg_dir }}
+            updpkgsums
+            # makepkg needs fakeroot, which is part of base-devel
+            makepkg --syncdeps --noconfirm --skippgpcheck
+          '
 
-              # Switch to the build user to perform the work
-              sudo -u builduser bash -c "
-                cd ${{ steps.set_vars.outputs.pkg_dir }}
-                # Automatically calculate and update the checksums
-                updpkgsums
-                # Build the package, installing dependencies automatically
-                makepkg --syncdeps --noconfirm --skippgpcheck
-              "
+          # Prepare the repository structure
+          mkdir -p repo/x86_64
+          mv ${{ steps.set_vars.outputs.pkg_dir }}/*.pkg.tar.zst repo/x86_64/
+          repo-add repo/x86_64/${{ steps.set_vars.outputs.repo_name }}.db.tar.gz repo/x86_64/*.pkg.tar.zst
 
-              # Prepare the repository structure for GitHub Pages
-              mkdir -p repo/x86_64
-              mv ${{ steps.set_vars.outputs.pkg_dir }}/*.pkg.tar.zst repo/x86_64/
-
-              # Add the new package to the repository database
-              repo-add repo/x86_64/${{ steps.set_vars.outputs.repo_name }}.db.tar.gz repo/x86_64/*.pkg.tar.zst
-            '
-
-      - name: Commit updated PKGBUILD
+      - name: Commit and Push updated PKGBUILD
         if: steps.check_version.outputs.new_version_found == 'true'
         run: |
+          # Configure git with the bot's identity
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          # This config is needed as the user in the container is different
+          git config --global --add safe.directory /github/workspace
+
           git add ${{ steps.set_vars.outputs.pkg_dir }}/PKGBUILD
           git commit -m "auto: Update ${{ steps.set_vars.outputs.pkg_dir }} to ${{ steps.check_version.outputs.new_version_tag }}"
           git push
 
       - name: Deploy repository to GitHub Pages
         if: steps.check_version.outputs.new_version_found == 'true'
+        # This action runs outside the container on the host runner
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
