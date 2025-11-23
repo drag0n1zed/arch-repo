@@ -1,4 +1,5 @@
-# Maintainer: drag <drag0n1zed@outlook.com>
+# Maintainer: Geph Team <contact@geph.io>
+# Contributor: Your Name <youremail@domain.com>
 pkgname=gephgui-wry-bin
 pkgver=0.0.1
 pkgrel=1
@@ -13,5 +14,5 @@ source=("https://github.com/geph-official/gephgui-pkg/releases/download/v${pkgve
 sha256sums=('9c933973952f4c7847053c5163f5387413a968a3f80c657579f15049a4f2165c')
 
 package() {
-  cp -dr --no-preserve=ownership "${srcdir}/usr" "${pkgdir}/"
+  tar -xf "${srcdir}/data.tar.xz" -C "${pkgdir}/"
 }
