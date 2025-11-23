@@ -44,7 +44,12 @@ jobs:
         id: check_version
         run: |
           LOCAL_VER=$(grep -Po '^pkgver=\K.*' ${{ steps.set_vars.outputs.pkg_dir }}/PKGBUILD)
-          UPSTREAM_VER=$(curl -s "https://api.github.com/repos/geph-official/gephgui-pkg/releases/latest" | jq -r '.tag_name' | sed 's/^v//')
+          UPSTREAM_VER=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/geph-official/gephgui-pkg/releases/latest" | jq -r '.tag_name' | sed 's/^v//')
+
+          if [[ -z "$UPSTREAM_VER" || "$UPSTREAM_VER" == "null" ]]; then
+            echo "Failed to fetch upstream version. Exiting."
+            exit 1
+          fi
 
           echo "Current version in repo: ${LOCAL_VER}"
           echo "Latest upstream version: ${UPSTREAM_VER}"
