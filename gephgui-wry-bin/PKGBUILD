@@ -1,7 +1,7 @@
 # Maintainer: Geph Team <contact@geph.io>
 # Contributor: drag <drag0n1zed@outlook.com>
 pkgname=gephgui-wry-bin
-pkgver=0.0.1
+pkgver=5.3.1
 pkgrel=1
 pkgdesc="The desktop GUI for Geph (pre-compiled binary)"
 arch=('x86_64')
