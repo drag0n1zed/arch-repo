@@ -13,9 +13,6 @@ permissions:
 jobs:
   check-and-build:
     runs-on: ubuntu-latest
-    # --- THIS IS THE KEY CHANGE ---
-    # We define the container for the entire job here.
-    # All 'run' steps will now execute inside Arch Linux.
     container:
       image: archlinux:base-devel
 
@@ -98,7 +95,6 @@ jobs:
 
       - name: Deploy repository to GitHub Pages
         if: steps.check_version.outputs.new_version_found == 'true'
-        # This action runs outside the container on the host runner
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
