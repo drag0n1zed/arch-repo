@@ -13,5 +13,5 @@ source=("https://github.com/geph-official/gephgui-pkg/releases/download/v${pkgve
 sha256sums=('9c933973952f4c7847053c5163f5387413a968a3f80c657579f15049a4f2165c')
 
 package() {
-  cp -dr --no-preserve=ownership usr "${pkgdir}/"
+  cp -dr --no-preserve=ownership "${srcdir}/usr" "${pkgdir}/"
 }
