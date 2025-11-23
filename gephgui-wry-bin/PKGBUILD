@@ -16,12 +16,14 @@ sha256sums=('5f02454b1af0b0ed9d27083ef3b83830b335cff15ad8617b7603864091fd00f1'
         'SKIP')
 
 package() {
-  tar -xf "${srcdir}/data.tar.zst" -C "${pkgdir}/"
+  tar -xf "${srcdir}/data.tar.zst" -C "${srcdir}/"
 
   find "${pkgdir}" -type d -exec chmod 755 {} +
   find "${pkgdir}" -type f -exec chmod 644 {} +
 
+  sed -i 's|^Exec=.*|Exec=gephgui-wry.sh|' "${srcdir}/usr/share/applications/gephgui-wry.desktop"
+
   install -Dm755 "${srcdir}/gephgui-wry.sh" "${pkgdir}/usr/bin/gephgui-wry.sh"
 
-  sed -i 's|^Exec=.*|Exec=gephgui-wry.sh|' "${pkgdir}/usr/share/applications/gephgui-wry.desktop"
+  cp -dr --no-preserve=ownership "${srcdir}/usr" "${pkgdir}/"
 }
