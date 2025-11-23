@@ -22,7 +22,7 @@ jobs:
         id: set_vars
         run: |
           echo "pkg_dir=gephgui-wry-bin" >> $GITHUB_OUTPUT
-          echo "repo_name=my-repo" >> $GITHUB_OUTPUT
+          echo "repo_name=drags-repo" >> $GITHUB_OUTPUT
 
       - name: Install Dependencies and Parse PKGBUILD
         id: deps
