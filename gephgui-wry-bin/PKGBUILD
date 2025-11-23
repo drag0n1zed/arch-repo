@@ -24,7 +24,7 @@ package() {
 
   install -Dm755 "gephgui-wry.sh" "${pkgdir}/usr/bin/gephgui-wry.sh"
 
-  cp -dr --no-preserve-ownership "usr" "${pkgdir}/"
+  cp -dr "usr" "${pkgdir}/"
 
   mv "${pkgdir}/usr/share/applications/geph.desktop" "${pkgdir}/usr/share/applications/gephgui-wry.desktop"
 }
