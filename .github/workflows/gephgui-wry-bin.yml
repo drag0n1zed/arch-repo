@@ -110,11 +110,11 @@ jobs:
           else
             echo "No changes to PKGBUILD to commit."
           fi
-
-      - name: Deploy repository to GitHub Pages
+      # Uses actions-gh-pages@v3 but Vercel works with any branch
+      - name: Deploy repository to the Vercel branch
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: artifacts/repo
-          publish_branch: gh-pages
+          publish_branch: vercel
           keep_files: true
