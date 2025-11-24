@@ -26,13 +26,23 @@ echo "::group::Update Found: $LOCAL_VER -> $UPSTREAM_VER"
 sed -i "s/^pkgver=.*/pkgver=${UPSTREAM_VER}/" PKGBUILD
 sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
 
-# 3. Build
+# 3. Install Dependencies
+# Source the PKGBUILD to get the 'depends' array variables
+source PKGBUILD
+if [[ -n "${depends[@]}" ]]; then
+    echo "Installing build dependencies: ${depends[*]}"
+    # Install dependencies as root before switching users
+    pacman -Syu --noconfirm --needed "${depends[@]}"
+fi
+
+# 4. Build
 # Create non-root user for makepkg security compliance
 useradd -m builduser
 chown -R builduser:builduser .
 
-# updpkgsums automatically calculates checksums for source files (including your .sh helper)
+# updpkgsums automatically downloads sources and updates checksums
 sudo -u builduser bash -c 'updpkgsums'
+# Build the package
 sudo -u builduser bash -c 'makepkg --skippgpcheck --noconfirm'
 
 echo "built=true" >> $GITHUB_OUTPUT
