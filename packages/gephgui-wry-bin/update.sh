@@ -7,7 +7,7 @@ API_URL="https://api.github.com/repos/geph-official/gephgui-pkg/releases/latest"
 
 # 1. Version Check
 LOCAL_VER=$(grep -Po '^pkgver=\K.*' PKGBUILD)
-UPSTREAM_VER=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" "$API_URL" | jq -r '.tag_name' | sed 's/^v//')
+UPSTREAM_VER=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" "$API_URL" | grep -oP '"tag_name": "v?\K[^"]+')
 
 if [[ -z "$UPSTREAM_VER" || "$UPSTREAM_VER" == "null" ]]; then
     echo "Error: Failed to fetch upstream version."
