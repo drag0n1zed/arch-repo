@@ -74,12 +74,17 @@ jobs:
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          
-          # If artifacts exist, it means update.sh modified PKGBUILDs. Commit them.
-          if [ -n "$(ls -A ../built_packages)" ]; then
+          # Update PKGBUILD
+          if [ -d "../built_packages" ]; then
+             cp -r ../built_packages/* packages/
+          fi
+          # Commit
+          if [[ -n $(git status --porcelain) ]]; then
             git add packages
-            git commit -m "auto: update packages [skip ci]" || echo "No changes to commit"
+            git commit -m "auto: update packages [skip ci]"
             git push
+          else
+            echo "No changes to commit."
           fi
 
       # 2. Update Repository Database -----------------------------------------
