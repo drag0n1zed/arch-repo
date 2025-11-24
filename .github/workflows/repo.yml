@@ -30,7 +30,7 @@ jobs:
         working-directory: packages/${{ matrix.pkg }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Assuming update.sh handles version checks and runs makepkg
+        # update.sh handles version checks and runs makepkg
         run: ./update.sh
 
       - name: Upload Binaries
@@ -39,6 +39,7 @@ jobs:
         with:
           name: pkg-${{ matrix.pkg }}
           path: packages/${{ matrix.pkg }}/*.pkg.tar.zst
+                packages/${{ matrix.pkg }}/PKGBUILD
           if-no-files-found: error
 
   deploy:
@@ -99,7 +100,7 @@ jobs:
           # Move new binaries to repo folder
           mv built_packages/*.pkg.tar.zst repo_root/x86_64/
           
-          # Run repo-add (Native Arch command)
+          # Run repo-add
           cd repo_root/x86_64
           repo-add drags-repo.db.tar.gz *.pkg.tar.zst
 
@@ -112,4 +113,4 @@ jobs:
           publish_branch: vercel
           keep_files: true
           user_name: 'github-actions[bot]'
-          user_email: '41898282+github-actions[bot]@users.noreply.github.com'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
