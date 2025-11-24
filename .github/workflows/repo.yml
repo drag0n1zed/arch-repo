@@ -1,12 +1,3 @@
-# ==============================================================================
-# ARCH REPO BUILDER
-#
-# HOW TO ADD NEW PACKAGES:
-# 1. Create directory: packages/<pkg-name>/
-# 2. Add PKGBUILD and update.sh (executable) inside that directory.
-# 3. Add <pkg-name> to the 'matrix: pkg' list below.
-# ==============================================================================
-
 name: Repo Builder
 
 on:
@@ -24,82 +15,101 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pkg: [gephgui-wry-bin] 
-
+        pkg: [gephgui-wry-bin]
+    
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Build Deps
+      - name: Install Tools
         run: |
           pacman-key --init && pacman-key --populate archlinux
-          pacman -Syu --noconfirm jq git pacman-contrib
+          pacman -Syu --noconfirm git pacman-contrib
 
-      - name: Run Update Script
-        id: update
+      - uses: actions/checkout@v4
+
+      - name: Build Package
+        id: build
         working-directory: packages/${{ matrix.pkg }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Assuming update.sh handles version checks and runs makepkg
         run: ./update.sh
 
-      - name: Commit Changes
-        if: steps.update.outputs.built == 'true'
-        run: |
-          git config --global --add safe.directory $GITHUB_WORKSPACE
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add packages/${{ matrix.pkg }}/PKGBUILD
-          git commit -m "chore(${{ matrix.pkg }}): update to ${{ steps.update.outputs.version }}"
-          git push
-
-      - name: Upload Artifact
-        if: steps.update.outputs.built == 'true'
+      - name: Upload Binaries
+        if: steps.build.outputs.built == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: built-pkgs
+          name: pkg-${{ matrix.pkg }}
           path: packages/${{ matrix.pkg }}/*.pkg.tar.zst
+          if-no-files-found: error
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    if: always() 
-    
+    # Run deploy inside Arch to access 'repo-add' natively
+    container: archlinux:base-devel
+    if: success() # Only run if builds succeeded
+
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: built-pkgs
-          path: new_pkgs
-        continue-on-error: true 
-
-      - name: Check Artifacts
-        id: check
+      - name: Install Tools
+        # NodeJS is required to run the 'actions/checkout' and 'gh-pages' plugins
         run: |
-          [ -d "new_pkgs" ] && [ "$(ls -A new_pkgs)" ] && echo "update=true" >> $GITHUB_OUTPUT || true
+          pacman-key --init && pacman-key --populate archlinux
+          pacman -Syu --noconfirm git openssh rsync nodejs
 
+      # 1. Update Source (PKGBUILDs) ------------------------------------------
       - uses: actions/checkout@v4
-        if: steps.check.outputs.update == 'true'
+        with:
+          path: source
+
+      - name: Download New Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          merge-multiple: true
+          path: built_packages
+
+      - name: Commit PKGBUILD Updates
+        working-directory: source
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # If artifacts exist, it means update.sh modified PKGBUILDs. Commit them.
+          if [ -n "$(ls -A ../built_packages)" ]; then
+            git add packages
+            git commit -m "auto: update packages [skip ci]" || echo "No changes to commit"
+            git push
+          fi
+
+      # 2. Update Repository Database -----------------------------------------
+      - uses: actions/checkout@v4
         with:
           ref: vercel
-          path: repo
+          path: repo_root
 
-      - name: Update DB
-        if: steps.check.outputs.update == 'true'
-        # We use a temporary Docker container just to run repo-add
+      - name: Generate Repo DB
         run: |
-          mkdir -p repo/x86_64
-          mv new_pkgs/*.pkg.tar.zst repo/x86_64/
-          
-          # Run repo-add inside an Arch container
-          docker run --rm -v "$PWD/repo/x86_64:/db" archlinux:base-devel \
-            bash -c "cd /db && repo-add drags-repo.db.tar.gz *.pkg.tar.zst"
-          
-          # Fix permissions (Docker runs as root, we need to own files to push)
-          sudo chown -R $USER repo
+          # Check if we actually have new packages
+          if [ ! -d "built_packages" ] || [ -z "$(ls -A built_packages)" ]; then
+            echo "No packages built. Exiting."
+            exit 0
+          fi
 
-      - name: Push to Vercel
-        if: steps.check.outputs.update == 'true'
+          mkdir -p repo_root/x86_64
+          
+          # Move new binaries to repo folder
+          mv built_packages/*.pkg.tar.zst repo_root/x86_64/
+          
+          # Run repo-add (Native Arch command)
+          cd repo_root/x86_64
+          repo-add drags-repo.db.tar.gz *.pkg.tar.zst
+
+      # 3. Deploy to Vercel Branch --------------------------------------------
+      - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: repo
+          publish_dir: repo_root
           publish_branch: vercel
           keep_files: true
+          user_name: 'github-actions[bot]'
+          user_email: '41898282+github-actions[bot]@users.noreply.github.com'
