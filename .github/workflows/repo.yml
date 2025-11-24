@@ -38,8 +38,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pkg-${{ matrix.pkg }}
-          path: packages/${{ matrix.pkg }}/*.pkg.tar.zst
-                packages/${{ matrix.pkg }}/PKGBUILD
+          path: |
+              packages/${{ matrix.pkg }}/*.pkg.tar.zst
+              packages/${{ matrix.pkg }}/PKGBUILD
           if-no-files-found: error
 
   deploy:
