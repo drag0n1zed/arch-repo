@@ -60,14 +60,14 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    if: always() # Run even if some builds skipped, checks for artifacts below
+    if: always() 
     
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: built-pkgs
           path: new_pkgs
-        continue-on-error: true # No error if no updates today
+        continue-on-error: true 
 
       - name: Check Artifacts
         id: check
@@ -82,12 +82,17 @@ jobs:
 
       - name: Update DB
         if: steps.check.outputs.update == 'true'
-        container: archlinux:base-devel
+        # We use a temporary Docker container just to run repo-add
         run: |
           mkdir -p repo/x86_64
           mv new_pkgs/*.pkg.tar.zst repo/x86_64/
-          cd repo/x86_64
-          repo-add drags-repo.db.tar.gz *.pkg.tar.zst
+          
+          # Run repo-add inside an Arch container
+          docker run --rm -v "$PWD/repo/x86_64:/db" archlinux:base-devel \
+            bash -c "cd /db && repo-add drags-repo.db.tar.gz *.pkg.tar.zst"
+          
+          # Fix permissions (Docker runs as root, we need to own files to push)
+          sudo chown -R $USER repo
 
       - name: Push to Vercel
         if: steps.check.outputs.update == 'true'
