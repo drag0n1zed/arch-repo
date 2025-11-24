@@ -1,0 +1,99 @@
+# ==============================================================================
+# ARCH REPO BUILDER
+#
+# HOW TO ADD NEW PACKAGES:
+# 1. Create directory: packages/<pkg-name>/
+# 2. Add PKGBUILD and update.sh (executable) inside that directory.
+# 3. Add <pkg-name> to the 'matrix: pkg' list below.
+# ==============================================================================
+
+name: Repo Builder
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: [gephgui-wry-bin] 
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Build Deps
+        run: |
+          pacman-key --init && pacman-key --populate archlinux
+          pacman -Syu --noconfirm jq git pacman-contrib
+
+      - name: Run Update Script
+        id: update
+        working-directory: packages/${{ matrix.pkg }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./update.sh
+
+      - name: Commit Changes
+        if: steps.update.outputs.built == 'true'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add packages/${{ matrix.pkg }}/PKGBUILD
+          git commit -m "chore(${{ matrix.pkg }}): update to ${{ steps.update.outputs.version }}"
+          git push
+
+      - name: Upload Artifact
+        if: steps.update.outputs.built == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-pkgs
+          path: packages/${{ matrix.pkg }}/*.pkg.tar.zst
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: always() # Run even if some builds skipped, checks for artifacts below
+    
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: built-pkgs
+          path: new_pkgs
+        continue-on-error: true # No error if no updates today
+
+      - name: Check Artifacts
+        id: check
+        run: |
+          [ -d "new_pkgs" ] && [ "$(ls -A new_pkgs)" ] && echo "update=true" >> $GITHUB_OUTPUT || true
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.update == 'true'
+        with:
+          ref: vercel
+          path: repo
+
+      - name: Update DB
+        if: steps.check.outputs.update == 'true'
+        container: archlinux:base-devel
+        run: |
+          mkdir -p repo/x86_64
+          mv new_pkgs/*.pkg.tar.zst repo/x86_64/
+          cd repo/x86_64
+          repo-add drags-repo.db.tar.gz *.pkg.tar.zst
+
+      - name: Push to Vercel
+        if: steps.check.outputs.update == 'true'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: repo
+          publish_branch: vercel
+          keep_files: true
