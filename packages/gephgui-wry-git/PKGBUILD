@@ -6,6 +6,7 @@ pkgrel=1
 pkgdesc="Geph connects you with the censorship-free Internet (GUI Client)"
 arch=('x86_64')
 url="https://github.com/geph-official/gephgui-wry"
+options=('!lto')
 depends=(
     'webkit2gtk-4.1'
     'libappindicator-gtk3'
