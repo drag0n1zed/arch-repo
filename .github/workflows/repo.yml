@@ -58,7 +58,7 @@ jobs:
             # -c: clean up source files after build
             # Uses the builduser
             sudo -u builduser makepkg -sfc --noconfirm
-            find . -maxdepth 1 - name "*.pkg.tar.zst" -exec mv {} ../../repo/x86_64/ \;
+            find . -maxdepth 1 -name "*.pkg.tar.zst" -exec mv {} ../../repo/x86_64/ \;
             cd ../..
             echo "::endgroup::"
           done
