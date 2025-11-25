@@ -21,9 +21,34 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  prep-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find packages
+        id: set-matrix
+        # 1. Find packages containing PKGBUILD
+        # 2. strip the ./
+        # 3. output as JSON array
+        run: |
+          MATRIX_JSON=$(find packages -name PKGBUILD -printf '%h\n' | jq -R -s -c 'split("\n")[:-1]')')
+          echo "Found packages: $MATRIX_JSON"
+          echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
+
+  build:
+    needs: prep-matrix
+    # If prep-matrix returns empty list, prevents running
+    if: ${{ needs.prep-matrix.outputs.matrix != '[]' && needs.prep-matrix.outputs.matrix != '' }}
     runs-on: ubuntu-latest
     container: archlinux:latest
+    strategy:
+      fail-fast: false # One failed package doesn't stop the rest
+      matrix:
+        package_path: ${{ fromJson(needs.prep-matrix.outputs.matrix) }}
+
     steps:
       - name: Prep environment
         run: |
@@ -41,41 +66,57 @@ jobs:
           echo "builduser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           # Give ownership of the repo to the user
           chown -R builduser:builduser $PWD
-      
+
+      - name: Build ${{ matrix.package_path }}
+        run: |
+          echo "::group::Building ${{ matrix.package_path }}"
+          cd "${{ matrix.package_path }}"
+          # -s: install dependencies
+          # -f: force a check
+          # -c: clean up source files after build
+          # Uses the builduser
+          sudo -u builduser makepkg -sfc --noconfirm
+          echo "::endgroup::"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ strategy.job-index }} # Unique names for each artifact
+          path: ${{ matrix.package_path }}/*.pkg.tar.zst # Take only *.zst
+          retention-days: 1
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Prep environment
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm base-devel git
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Create staging directory
         run: mkdir -p repo/x86_64
-      
-      - name: Find packages to build
-        id: packages_to_build
-        run: |
-            PACKAGES_TO_BUILD=$(find packages -name PKGBUILD -exec dirname {} \;)
-            echo "Found packages to build:"
-            echo "${PACKAGES_TO_BUILD}"
-            echo "list=${PACKAGES_TO_BUILD}" >> $GITHUB_OUTPUT
 
-      - name: Build packages
-        run: |
-          for pkg in ${{ steps.packages_to_build.outputs.list }}; do
-            echo "::group::Building $pkg"
-            cd "$pkg"
-            # -s: install dependencies
-            # -f: force a check
-            # -c: clean up source files after build
-            # Uses the builduser
-            sudo -u builduser makepkg -sfc --noconfirm
-            find . -maxdepth 1 -name "*.pkg.tar.zst" -exec mv {} ../../repo/x86_64/ \;
-            cd ../..
-            echo "::endgroup::"
-          done
+      - name: Download all built packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          merge-multiple: true
+          path: repo/x86_64
 
       - name: Update pacman database
         run: |
           cd repo/x86_64
+          # Check if files actually exist
           if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
-            echo "Updating repo database..."
+            echo "Found packages, updating repo..."
             repo-add drags-repo.db.tar.zst *.pkg.tar.zst
           else
-            echo "No packages were built, skipping database update."
+            echo "No packages found."
             exit 0
           fi
       
