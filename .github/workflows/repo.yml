@@ -24,10 +24,18 @@ jobs:
         run: |
           pacman-key --init
           pacman-key --populate archlinux
-          pacman -Syu --noconfirm base-devel git
+          pacman -Syu --noconfirm base-devel git sudo
 
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Create build user
+        run: |
+          useradd -m builduser
+          # Passwordless sudo for the user
+          echo "builduser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          # Give ownership of the repo to the user
+          chown -R builduser:builduser $PWD
       
       - name: Create staging directory
         run: mkdir -p repo/x86_64
@@ -48,8 +56,8 @@ jobs:
             # -s: install dependencies
             # -f: force a check
             # -c: clean up source files after build
-            makepkg -sfc --noconfirm
-
+            # Uses the builduser
+            sudo -u builduser makepkg -sfc --noconfirm
             find . -maxdepth 1 - name "*.pkg.tar.zst" -exec mv {} ../../repo/x86_64/ \;
             cd ../..
             echo "::endgroup::"
