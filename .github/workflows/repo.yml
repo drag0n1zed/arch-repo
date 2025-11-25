@@ -31,10 +31,11 @@ jobs:
       - name: Find packages
         id: set-matrix
         # 1. Find packages containing PKGBUILD
-        # 2. strip the ./
-        # 3. output as JSON array
+        # 2. split by newline
+        # 3. remove empty strings
+        # 4. output as JSON array
         run: |
-          MATRIX_JSON=$(find packages -name PKGBUILD -printf '%h\n' | jq -R -s -c 'split("\n")[:-1]')')
+          MATRIX_JSON=$(find packages -name PKGBUILD -exec dirname {} \; | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "Found packages: $MATRIX_JSON"
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 
