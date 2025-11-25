@@ -6,11 +6,12 @@ permissions:
 
 # Run when..
 on: 
-  # ..a push to packages/** happens
+  # ..a push happens
   push:
     branches: [main]
     paths:
       - 'packages/**'
+      - 'index.html'
       - '.github/workflows/**'
   
   # ..the daily schedule happens
@@ -23,21 +24,105 @@ on:
 jobs:
   prep-matrix:
     runs-on: ubuntu-latest
+    container: archlinux:latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Needed for git diff
 
-      - name: Find packages
-        id: set-matrix
-        # 1. Find packages containing PKGBUILD
-        # 2. split by newline
-        # 3. remove empty strings
-        # 4. output as JSON array
+      - name: Install Tools
         run: |
-          MATRIX_JSON=$(find packages -name PKGBUILD -exec dirname {} \; | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          echo "Found packages: $MATRIX_JSON"
-          echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
+          pacman -Syu --noconfirm base-devel git jq
+
+      - name: Create Build User
+        run: |
+          useradd -m builduser
+          echo "builduser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          chown -R builduser:builduser $PWD
+
+      - name: Calculate Matrix
+        id: set-matrix
+        shell: bash
+        run: |
+          # --- CONFIGURATION ---
+          # Construct the Raw URL using the repository variable
+          # Points to: https://raw.githubusercontent.com/USER/REPO/repo-host/x86_64
+          REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/repo-host/x86_64"
+          
+          echo "::group::Configuring Pacman"
+          # Add our own repo to pacman.conf so we can check current versions
+          echo "[drags-repo]" >> /etc/pacman.conf
+          echo "SigLevel = Optional TrustAll" >> /etc/pacman.conf
+          echo "Server = $REPO_URL" >> /etc/pacman.conf
+          
+          # Sync DB. Ignore failure if repo doesn't exist yet (first run)
+          pacman -Sy || echo "Repo DB download failed (normal for first run)."
+          echo "::endgroup::"
+
+          TO_BUILD=()
+
+          # --- LOGIC BRANCHING ---
+          
+          # CASE A: PUSH EVENT (Fast Check)
+          if [ "${{ github.event_name }}" == "push" ]; then
+            echo "Push detected. Checking for file changes..."
+            # Find folders inside packages/ that changed
+            CHANGED=$(git diff --name-only HEAD^ HEAD | grep '^packages/' | awk -F/ '{print $1"/"$2}' | sort -u)
+            
+            for pkg in $CHANGED; do
+              if [ -f "$pkg/PKGBUILD" ]; then
+                echo "  -> Found change in: $pkg"
+                TO_BUILD+=("$pkg")
+              fi
+            done
+
+          # CASE B: SCHEDULE or MANUAL (Deep Check)
+          else
+            echo "Schedule/Manual trigger. Checking ALL upstream versions..."
+            
+            # Loop through every package folder
+            for dir in packages/*; do
+              if [ -f "$dir/PKGBUILD" ]; then
+                PKG_NAME=$(grep '^pkgname=' "$dir/PKGBUILD" | cut -d= -f2 | tr -d "'\"")
+                
+                # Get Repo Version (0 if not found)
+                REPO_VER=$(pacman -Si $PKG_NAME 2>/dev/null | awk '/Version/ {print $3}' || echo "0")
+                
+                # Get Upstream Version (by running makepkg's pkgver function)
+                chown -R builduser:builduser "$dir"
+                cd "$dir"
+                # Download sources only (-od), then print srcinfo
+                sudo -u builduser makepkg -od --noconfirm > /dev/null 2>&1
+                SRCINFO=$(sudo -u builduser makepkg --printsrcinfo)
+                NEW_VER=$(echo "$SRCINFO" | awk '/pkgver =/ {print $3}')
+                NEW_REL=$(echo "$SRCINFO" | awk '/pkgrel =/ {print $3}')
+                FULL_NEW_VER="${NEW_VER}-${NEW_REL}"
+                cd ../..
+
+                echo "Checking $PKG_NAME: Repo [$REPO_VER] vs New [$FULL_NEW_VER]"
+
+                if [ "$REPO_VER" == "0" ]; then
+                   echo "  -> New package."
+                   TO_BUILD+=("$dir")
+                elif [ $(vercmp "$FULL_NEW_VER" "$REPO_VER") -gt 0 ]; then
+                   echo "  -> Update found."
+                   TO_BUILD+=("$dir")
+                fi
+              fi
+            done
+          fi
+
+          # --- OUTPUT ---
+          if [ ${#TO_BUILD[@]} -eq 0 ]; then
+            echo "No changes found."
+            echo "matrix=[]" >> $GITHUB_OUTPUT
+          else
+            # Convert bash array to JSON
+            JSON_STRING=$(printf '%s\n' "${TO_BUILD[@]}" | jq -R . | jq -s .)
+            echo "matrix=$JSON_STRING" >> $GITHUB_OUTPUT
+          fi
 
   build:
     needs: prep-matrix
@@ -82,9 +167,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pkg-${{ strategy.job-index }} # Unique names for each artifact
+          name: built-packages-${{ strategy.job-index }} # Unique names for each artifact
           path: ${{ matrix.package_path }}/*.pkg.tar.zst # Take only *.zst
           retention-days: 1
+
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -94,18 +180,25 @@ jobs:
         run: |
           pacman-key --init
           pacman-key --populate archlinux
-          pacman -Syu --noconfirm base-devel git
+          pacman -Syu --noconfirm base-devel git github-cli
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Create staging directory
-        run: mkdir -p repo/x86_64
+      - name: Restore Existing DB
+        continue-on-error: true
+        run: |
+          mkdir -p repo/x86_64
+          REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/repo-host/x86_64"
+          echo "Fetching existing DB from $REPO_URL"
+          
+          # Download db.tar.zst and save as .db (repo-add requirement)
+          curl -L -f -o repo/x86_64/drags-repo.db.tar.zst "$REPO_URL/drags-repo.db.tar.zst" || echo "First run or DB missing."
 
-      - name: Download all built packages
+      - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: pkg-*
+          pattern: built-packages-*
           merge-multiple: true
           path: repo/x86_64
 
@@ -114,18 +207,31 @@ jobs:
           cd repo/x86_64
           # Check if files actually exist
           if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
-            echo "Found packages, updating repo..."
-            repo-add drags-repo.db.tar.zst *.pkg.tar.zst
-          else
-            echo "No packages found."
-            exit 0
+            repo-add -n -R drags-repo.db.tar.zst *.pkg.tar.zst
           fi
       
-      - name: Deploy to Vercel branch
+      - name: Upload binaries to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: packages
+          name: "Package Repository"
+          files: repo/x86_64/*.pkg.tar.zst
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clean and Prepare
+        run: |
+          # Delete the heavy binaries so they don't bloat the git repo
+          rm repo/x86_64/*.pkg.tar.zst
+          rm repo/x86_64/*.pkg.tar.zst.sig || true
+          
+          # Copy index.html to the deploy folder
+          cp index.html repo/index.html || echo "No index.html found, skipping."
+      
+      - name: Push DB & Site
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./repo
-          publish_branch: vercel
+          publish_branch: repo-host
           force_orphan: true
-          commit_message: "Deploy updated repo packages"
+          commit_message: "Update repo database [skip ci]"
