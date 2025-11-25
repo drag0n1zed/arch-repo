@@ -1,122 +1,76 @@
-name: Repo Builder
+name: Build and Deploy Repo to Vercel Branch
 
-on:
+# Run when..
+on: 
+  # ..a push to packages/** happens
+  push:
+    branches: [main]
+    paths:
+      - 'packages/**'
+  
+  # ..the daily schedule happens
   schedule:
     - cron: '0 8 * * *'
+
+  # ..manually triggered
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    container: archlinux:base-devel
-    strategy:
-      fail-fast: false
-      matrix:
-        pkg: [gephgui-wry-bin]
-    
+    container: archlinux:latest
     steps:
-      - name: Install Tools
+      - name: Prep environment
         run: |
-          pacman-key --init && pacman-key --populate archlinux
-          pacman -Syu --noconfirm git pacman-contrib
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm base-devel git
 
-      - uses: actions/checkout@v4
-
-      - name: Build Package
-        id: build
-        working-directory: packages/${{ matrix.pkg }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # update.sh handles version checks and runs makepkg
-        run: ./update.sh
-
-      - name: Upload Binaries
-        if: steps.build.outputs.built == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: pkg-${{ matrix.pkg }}
-          path: |
-              packages/${{ matrix.pkg }}/*.pkg.tar.zst
-              packages/${{ matrix.pkg }}/PKGBUILD
-          if-no-files-found: error
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    # Run deploy inside Arch to access 'repo-add' natively
-    container: archlinux:base-devel
-    if: success() # Only run if builds succeeded
-
-    steps:
-      - name: Install Tools
-        # NodeJS is required to run the 'actions/checkout' and 'gh-pages' plugins
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Create staging directory
+        run: mkdir -p repo/x86_64
+      
+      - name: Find packages to build
+        id: packages_to_build
         run: |
-          pacman-key --init && pacman-key --populate archlinux
-          pacman -Syu --noconfirm git openssh rsync nodejs
+            PACKAGES_TO_BUILD=$(find packages -name PKGBUILD -exec dirname {} \;)
+            echo "Found packages to build:"
+            echo "${PACKAGES_TO_BUILD}"
+            echo "list=${PACKAGES_TO_BUILD}" >> $GITHUB_OUTPUT
 
-      # 1. Update Source (PKGBUILDs) ------------------------------------------
-      - uses: actions/checkout@v4
-        with:
-          path: source
-
-      - name: Download New Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: pkg-*
-          merge-multiple: true
-          path: built_packages
-
-      - name: Commit PKGBUILD Updates
-        working-directory: source
+      - name: Build packages
         run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          # Update PKGBUILD
-          if [ -d "../built_packages" ]; then
-             cp -r ../built_packages/* packages/
-          fi
-          # Commit
-          if [[ -n $(git status --porcelain) ]]; then
-            git add packages
-            git commit -m "auto: update packages [skip ci]"
-            git push
+          for pkg in ${{ steps.packages_to_build.outputs.list }}; do
+            echo "::group::Building $pkg"
+            cd "$pkg"
+            # -s: install dependencies
+            # -f: force a check
+            # -c: clean up source files after build
+            makepkg -sfc --noconfirm
+
+            find . -maxdepth 1 - name "*.pkg.tar.zst" -exec mv {} ../../repo/x86_64/ \;
+            cd ../..
+            echo "::endgroup::"
+          done
+
+      - name: Update pacman database
+        run: |
+          cd repo/x86_64
+          if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+            echo "Updating repo database..."
+            repo-add drags-repo.db.tar.zst *.pkg.tar.zst
           else
-            echo "No changes to commit."
-          fi
-
-      # 2. Update Repository Database -----------------------------------------
-      - uses: actions/checkout@v4
-        with:
-          ref: vercel
-          path: repo_root
-
-      - name: Generate Repo DB
-        run: |
-          # Check if we actually have new packages
-          if [ ! -d "built_packages" ] || [ -z "$(ls -A built_packages)" ]; then
-            echo "No packages built. Exiting."
+            echo "No packages were built, skipping database update."
             exit 0
           fi
-
-          mkdir -p repo_root/x86_64
-          
-          # Move new binaries to repo folder
-          mv built_packages/*.pkg.tar.zst repo_root/x86_64/
-          
-          # Run repo-add
-          cd repo_root/x86_64
-          repo-add drags-repo.db.tar.gz *.pkg.tar.zst
-
-      # 3. Deploy to Vercel Branch --------------------------------------------
-      - name: Deploy
+      
+      - name: Deploy to Vercel branch
         uses: peaceiris/actions-gh-pages@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: repo_root
+          github_token: ${{ secrets.GITHUB_TOKEN}}
+          publish_dir: ./repo
           publish_branch: vercel
-          keep_files: true
-          user_name: 'github-actions[bot]'
-          user_email: 'github-actions[bot]@users.noreply.github.com'
+          force_orphan: true
+          commit_message: "Deploy updated repo packages"
