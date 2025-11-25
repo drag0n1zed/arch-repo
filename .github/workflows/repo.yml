@@ -1,5 +1,9 @@
 name: Build and Deploy Repo to Vercel Branch
 
+# Allow the final deploying step to write
+permissions:
+  contents: write
+
 # Run when..
 on: 
   # ..a push to packages/** happens
