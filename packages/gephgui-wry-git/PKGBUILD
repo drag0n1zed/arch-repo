@@ -1,7 +1,7 @@
 # Maintainer: drag <drag0n1zed@outlook.com>
 pkgname=gephgui-wry-git
 _pkgname=gephgui-wry
-pkgver=r109.4738937
+pkgver=r0.0
 pkgrel=1
 pkgdesc="Geph connects you with the censorship-free Internet (GUI Client)"
 arch=('x86_64')
@@ -15,6 +15,7 @@ makedepends=(
   'npm'
   'git'
   'cargo'
+  'sqlite'
 )
 provides=("$_pkgname")
 conflicts=("$_pkgname")
