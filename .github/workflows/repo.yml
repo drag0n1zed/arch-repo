@@ -44,73 +44,63 @@ jobs:
 
       - name: Calculate Build Matrix
         id: set-matrix
-        shell: bash
+        shell: bash -euo pipefail
         run: |
-          # --- CONFIGURATION ---
-          # 1. Point to the folder where the DB lives on the 'repo-host' branch
+          # config
           REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/repo-host/x86_64"
-          
-          echo "::group::Configuring Pacman"
-          # Add our own repo to pacman.conf so we can compare versions
-          echo "[drags-repo]" >> /etc/pacman.conf
-          echo "SigLevel = Optional TrustAll" >> /etc/pacman.conf
-          echo "Server = $REPO_URL" >> /etc/pacman.conf
-          
-          # Sync DB. Ignore failure if repo doesn't exist yet (first run)
-          pacman -Sy || echo "Repo DB download failed (normal for first run)."
+          REPO_NAME="custom-repo"
+          PACKAGE_ROOT="packages"
+    
+          # setup repo 
+          echo "::group::Configuring Pacman for ${REPO_NAME}"
+          # Configure pacman to use the custom repository for version comparison.
+          # The '|| true' handles the case where the repo DB doesn't exist yet on the first run.
+          printf "\n[%s]\nSigLevel = Optional TrustAll\nServer = %s\n" "$REPO_NAME" "$REPO_URL" | sudo tee -a /etc/pacman.conf
+          sudo pacman -Sy --noconfirm || echo "::warning::Could not sync ${REPO_NAME} database. This is expected on the first run."
           echo "::endgroup::"
-
+    
+          # scan package
           TO_BUILD=()
-
-          echo "Starting Version Check..."
-
-          # --- MAIN LOOP ---
-          # Iterate through every folder in packages/
-          for dir in packages/*; do
-            if [ -f "$dir/PKGBUILD" ]; then
-              PKG_NAME=$(grep '^pkgname=' "$dir/PKGBUILD" | cut -d= -f2 | tr -d "'\"")
-              
-              # A. Get Repo Version (Return 0 if package doesn't exist in DB)
-              REPO_VER=$(pacman -Si $PKG_NAME 2>/dev/null | awk '/Version/ {print $3}' || echo "0")
-              
-              # B. Get Upstream Version (Dynamically run pkgver())
-              # We change ownership to builduser because makepkg can't run as root
-              chown -R builduser:builduser "$dir"
-              cd "$dir"
-              
-              # 1. Download sources (-od) to ensure we have latest git files
-              sudo -u builduser makepkg -od --noconfirm > /dev/null 2>&1
-              
-              # 2. Extract the calculated version
-              SRCINFO=$(sudo -u builduser makepkg --printsrcinfo)
-              NEW_VER=$(echo "$SRCINFO" | awk '/pkgver =/ {print $3}')
-              NEW_REL=$(echo "$SRCINFO" | awk '/pkgrel =/ {print $3}')
-              FULL_NEW_VER="${NEW_VER}-${NEW_REL}"
-              cd ../..
-
-              echo "Checking $PKG_NAME: Repo [$REPO_VER] vs New [$FULL_NEW_VER]"
-
-              # C. Compare Versions using Arch's vercmp tool
-              if [ "$REPO_VER" == "0" ]; then
-                 echo "  -> New package. Adding to queue."
-                 TO_BUILD+=("$dir")
-              elif [ $(vercmp "$FULL_NEW_VER" "$REPO_VER") -gt 0 ]; then
-                 echo "  -> Update found. Adding to queue."
-                 TO_BUILD+=("$dir")
-              else
-                 echo "  -> Up to date. Skipping."
-              fi
+          echo "Scanning for packages in '${PACKAGE_ROOT}' that require building..."
+    
+          for pkgbuild_path in "$PACKAGE_ROOT"/*/PKGBUILD; do
+            pkg_dir=$(dirname "$pkgbuild_path")
+      
+            # generate .SRCINFO in a subshell to get dynamic version without downloading sources.
+            # 'set -e' ensures the script fails immediately if makepkg encounters an error.
+            srcinfo_output=$(cd "$pkg_dir" && sudo -u builduser makepkg --printsrcinfo)
+    
+            # parse name and version from the generated .SRCINFO
+            pkg_name=$(awk -F ' = ' '/^\s*pkgname\s*=/ {print $2}' <<< "$srcinfo_output")
+            full_new_ver=$(awk -F ' = ' '/^\s*pkgver\s*=/ {print $2}' <<< "$srcinfo_output")
+    
+            # query the repo DB for the currently published version, default to "0" if not found.
+            repo_ver=$(pacman -Si "$pkg_name" 2>/dev/null | awk '/^Version/ {print $3}' || echo "0")
+    
+            echo "==> Checking ${pkg_name}: Repo [${repo_ver}] vs Local [${full_new_ver}]"
+      
+            # compare versions, add to queue if local version newer or package is new.
+            if [[ "$repo_ver" == "0" ]]; then
+              echo " -> New package. Adding to build queue."
+              TO_BUILD+=("$pkg_dir")
+            elif [[ $(vercmp "$full_new_ver" "$repo_ver") -gt 0 ]]; then
+              echo " -> Update found. Adding to build queue."
+              TO_BUILD+=("$pkg_dir")
             fi
           done
-
-          # --- OUTPUT ---
+    
+          # output
           if [ ${#TO_BUILD[@]} -eq 0 ]; then
-            echo "No changes found."
-            echo "matrix=[]" >> $GITHUB_OUTPUT
+            echo "::notice::No packages need to be built. The repository is up-to-date."
+            echo "matrix=[]" >> "$GITHUB_OUTPUT"
           else
-            # Convert bash array to JSON for the next job
-            JSON_STRING=$(printf '%s\n' "${TO_BUILD[@]}" | jq -R . | jq -s .)
-            echo "matrix=$JSON_STRING" >> $GITHUB_OUTPUT
+            echo "::notice::Found ${#TO_BUILD[@]} package(s) to build."
+            echo "The following packages will be added to the build matrix:"
+            printf "  - %s\n" "${TO_BUILD[@]}"
+
+            # Create a JSON array of package directories for the GitHub Actions matrix.
+            json_matrix=$(printf '%s\n' "${TO_BUILD[@]}" | jq -R . | jq -s .)
+            echo "matrix=${json_matrix}" >> "$GITHUB_OUTPUT"
           fi
 
   build:
