@@ -101,8 +101,8 @@ jobs:
             printf "  - %s\n" "${TO_BUILD[@]}"
 
             # Create a JSON array of package directories for the GitHub Actions matrix.
-            json_array=$(printf '%s\n' "${TO_BUILD[@]}" | jq -R '{"package_path": .}' | jq -s '{"include": .}')
-            echo "matrix=${json_array}" >> "$GITHUB_OUTPUT"
+            json_matrix=$(printf '%s\n' "${TO_BUILD[@]}" | jq -R '{ "package_path": . }' | jq -sc '{ "include": . }')
+            echo "matrix=${json_matrix}" >> "$GITHUB_OUTPUT"
           fi
 
   build:
