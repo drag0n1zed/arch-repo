@@ -44,8 +44,10 @@ jobs:
 
       - name: Calculate Build Matrix
         id: set-matrix
-        shell: bash -euo pipefail
+        shell: bash
         run: |
+
+          set -euo pipefail
           # config
           REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/repo-host/x86_64"
           REPO_NAME="custom-repo"
