@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <title>drag's Arch Repo</title>
+    <style>
+        /* Palette */
+        :root {
+            --base: #1e1e2e;
+            --mantle: #181825;
+            --crust: #11111b;
+            --text: #cdd6f4;
+            --subtext: #a6adc8;
+            --mauve: #cba6f7;
+            --red: #f38ba8;
+            --surface0: #313244;
+            --overlay0: #6c7086;
+        }
+
+        /* Base */
+        html {
+            background: var(--base);
+            height: 100%;
+        }
+
+        body { 
+            font-family: monospace; 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            padding: 40px; 
+            color: var(--text); 
+            font-size: 18px; 
+            line-height: 1.6;
+            box-sizing: border-box;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        /* Header */
+        .header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--surface0);
+            padding-bottom: 20px;
+            margin-bottom: 40px;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        h1 { 
+            margin: 0;
+            font-size: 2.2em;
+            color: var(--mauve);
+        }
+
+        .warning { 
+            color: var(--red); 
+            font-weight: bold; 
+            border: 1px solid var(--red); 
+            padding: 8px 16px; 
+            border-radius: 4px;
+            background: rgba(243, 139, 168, 0.1);
+            font-size: 0.9em;
+            white-space: nowrap;
+        }
+
+        /* Grid System */
+        .grid-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0;
+            width: 100%;
+        }
+
+        .left-col {
+            padding-right: 60px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .right-col {
+            padding-left: 60px;
+            border-left: 2px solid var(--surface0);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .step-2-wrapper {
+            margin-top: auto;
+            margin-bottom: auto;
+            width: 100%;
+        }
+
+        .back-link {
+            align-self: flex-end;
+            margin-top: 20px;
+            color: var(--mauve); 
+            text-decoration: none; 
+            font-size: 1em; 
+            transition: color 0.2s;
+        }
+
+        .back-link:hover { 
+            text-decoration: underline; 
+            text-shadow: 0 0 5px rgba(203, 166, 247, 0.4);
+        }
+
+        /* Typography */
+        h3 { 
+            margin-top: 10px; 
+            margin-bottom: 10px; 
+            color: var(--mauve);
+        }
+        
+        p { 
+            margin-top: 0; 
+            color: var(--subtext); 
+            font-size: 0.9em; 
+        }
+        
+        /* Components */
+        .code-box {
+            border: 1px solid var(--overlay0);
+            border-radius: 6px;
+            background: var(--mantle); 
+            overflow: hidden; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            width: 100%;
+        }
+
+        .box-header {
+            display: flex;
+            justify-content: flex-end; 
+            background: var(--crust);
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--surface0);
+        }
+
+        pre {
+            margin: 0;
+            padding: 20px;
+            overflow-x: auto;
+            background: transparent; 
+            font-size: 0.85em;
+            white-space: pre-wrap; 
+            word-break: break-all;
+        }
+        
+        code { color: #89b4fa; } 
+
+        .copy-btn {
+            background: transparent;
+            color: var(--subtext);
+            border: 1px solid var(--overlay0);
+            padding: 4px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-family: monospace;
+            transition: all 0.2s;
+        }
+        
+        .copy-btn:hover { background: var(--surface0); color: var(--text); border-color: var(--mauve); }
+        .copy-btn:active { background: var(--overlay0); }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            body { display: block; padding-top: 40px; }
+            .grid-container { grid-template-columns: 1fr; }
+            .left-col { padding-right: 0; margin-bottom: 40px; }
+            .right-col { 
+                padding-left: 0; 
+                border-left: none; 
+                border-top: 2px solid var(--surface0); 
+                padding-top: 40px; 
+                justify-content: flex-start;
+            }
+            .header-row { flex-direction: column; align-items: flex-start; gap: 15px; }
+            .back-link { margin-top: 30px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="header-row">
+        <h1>drag's Arch Repo</h1>
+        <div class="warning">
+            ⚠️ x86_64 ONLY
+        </div>
+    </header>
+
+    <!-- Content -->
+    <div class="grid-container">
+        
+        <!-- Installation Steps -->
+        <div class="left-col">
+            <div>
+                <h3>1a. Add to /etc/pacman.conf</h3>
+                <p>Paste this block at the end of your config:</p>
+                <div class="code-box">
+                    <div class="box-header">
+                        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                    </div>
+                    <pre><code>[drags-repo]
+SigLevel = Optional TrustAll
+Server = https://repo.zerodrag.dev/$arch</code></pre>
+                </div>
+            </div>
+
+            <div>
+                <h3>1b. Or One-Liner Install</h3>
+                <p>Run this to append automatically:</p>
+                <div class="code-box">
+                    <div class="box-header">
+                        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                    </div>
+                    <pre><code>sudo bash -c 'echo -e "\n[drags-repo]\nSigLevel = Optional TrustAll\nServer = https://repo.zerodrag.dev/\$arch" >> /etc/pacman.conf'</code></pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sync & Navigation -->
+        <div class="right-col">
+            <div class="step-2-wrapper">
+                <h3>2. Sync Repositories</h3>
+                <p>Update your database to see packages:</p>
+                <div class="code-box">
+                    <div class="box-header">
+                        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                    </div>
+                    <pre><code>sudo pacman -Sy</code></pre>
+                </div>
+            </div>
+
+            <a href="https://zerodrag.dev/" class="back-link">Back to Main Site &rarr;</a>
+        </div>
+
+    </div>
+
+    <script>
+        // Clipboard Handler
+        async function copyCode(button) {
+            const code = button.closest('.code-box').querySelector('code').innerText;
+            try {
+                await navigator.clipboard.writeText(code);
+                const originalText = button.innerText;
+                button.innerText = 'Copied!';
+                button.style.borderColor = '#cba6f7';
+                button.style.color = '#cba6f7';
+                
+                setTimeout(() => {
+                    button.innerText = originalText;
+                    button.style.borderColor = '#6c7086';
+                    button.style.color = '#a6adc8';
+                }, 2000);
+            } catch (err) {
+                console.error('Failed to copy text: ', err);
+                button.innerText = 'Error';
+            }
+        }
+    </script>
+</body>
+</html>
