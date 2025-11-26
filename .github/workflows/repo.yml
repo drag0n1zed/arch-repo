@@ -101,14 +101,14 @@ jobs:
             printf "  - %s\n" "${TO_BUILD[@]}"
 
             # Create a JSON array of package directories for the GitHub Actions matrix.
-            json_array=$(printf '%s\n' "${TO_BUILD[@]}" | jq -Rsc .)
-            echo "matrix={\"package_path\":${json_array}}" >> "$GITHUB_OUTPUT"
+            json_array=$(printf '%s\n' "${TO_BUILD[@]}" | jq -R '{"package_path": .}' | jq -s '{"include": .}')
+            echo "matrix=${json_array}" >> "$GITHUB_OUTPUT"
           fi
 
   build:
     needs: prep-matrix
     # If prep-matrix returns empty list, prevents running
-    if: ${{ needs.prep-matrix.outputs.matrix != '[]' && needs.prep-matrix.outputs.matrix != '' }}
+    if: ${{ needs.prep-matrix.outputs.matrix != '[]' }}
     runs-on: ubuntu-latest
     container: archlinux:latest
     strategy:
