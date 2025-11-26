@@ -45,11 +45,17 @@ jobs:
       - name: Calculate Build Matrix
         id: set-matrix
         shell: bash
+        env:
+          # Using AtomGit for version comparison to ensure we don't rebuild 
+          # packages that are already live on the mirror.
+          AG_USER: "drag0n1zed"
+          AG_REPO: "arch-repo" 
         run: |
 
           set -euo pipefail
           # config
-          REPO_URL="https://github.com/${{ github.repository }}/releases/download/packages"
+          # Update URL to point to AtomGit Raw for version checking
+          REPO_URL="https://atomgit.com/${AG_USER}/${AG_REPO}/raw/master"
           REPO_NAME="drags-repo"
           PACKAGE_ROOT="packages"
     
@@ -156,44 +162,73 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Prep environment
+        # Added git-lfs for AtomGit huge file support
         run: |
-          pacman -Syu --noconfirm base-devel git github-cli
+          pacman -Syu --noconfirm base-devel git git-lfs openssh
 
       - name: Checkout repository
+        # We need this to get your custom 'index.html'
         uses: actions/checkout@v4
 
-      - name: Restore Existing DB
+      - name: Restore Existing DB from AtomGit
+        env:
+          AG_USER: "drag0n1zed"
+          AG_REPO: "arch-repo" 
         continue-on-error: true
         run: |
-          mkdir -p repo/x86_64
-          https://github.com/drag0n1zed/arch-repo/releases/download/packages/gephgui-wry-git-r324.97d20c8-1-x86_64.pkg.tar.zst
-          REPO_URL="https://github.com/${{ github.repository }}/releases/download/packages"
+          mkdir -p dist
+          # Download from AtomGit Raw URL
+          REPO_URL="https://atomgit.com/${AG_USER}/${AG_REPO}/raw/master"
           echo "Fetching existing DB from $REPO_URL" 
           
-          # Download db.tar.zst and save as .db (repo-add requirement)
-          curl -L -f -o repo/x86_64/drags-repo.db.tar.zst "$REPO_URL/drags-repo.db.tar.zst" || echo "First run or DB missing."
+          # Download db.tar.zst and save as .db.tar.zst (repo-add requirement)
+          curl -L -f -o dist/drags-repo.db.tar.zst "$REPO_URL/drags-repo.db.tar.zst" || echo "First run or DB missing."
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: built-packages-*
           merge-multiple: true
-          path: repo/x86_64
+          path: dist
 
       - name: Update pacman database
         run: |
-          cd repo/x86_64
+          cd dist
           # Check if files actually exist
           if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
             repo-add -n -R drags-repo.db.tar.zst *.pkg.tar.zst
           fi
-      
-      - name: Upload repo to GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: packages
-          name: "Package Repository"
-          files: |
-            repo/x86_64/*
-            index.html
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+          # Prepare flat files for raw serving
+          rm -f drags-repo.db drags-repo.files
+          # Copy real files to standard names so AtomGit raw URL serves them directly
+          cp drags-repo.db.tar.zst drags-repo.db
+          cp drags-repo.files.tar.zst drags-repo.files
+
+      - name: Push to AtomGit (Orphan Force Push)
+        env:
+          AG_USER: "drag0n1zed"
+          AG_TOKEN: ${{ secrets.ATOMGIT_TOKEN }}
+          AG_REPO: "arch-repo" 
+        run: |
+          # 1. Move your custom index.html into the dist folder
+          cp index.html dist/
+
+          cd dist
+          
+          # 2. Initialize a fresh repo to keep history clean (using Github only as builder)
+          git init
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git config --global --add safe.directory '*'
+
+          # 3. Use LFS for the packages
+          git lfs install
+          git lfs track "*.pkg.tar.zst" "*.db" "*.files" "*.tar.zst"
+          
+          git add .
+          git commit -m "Deploy Repo: $(date)"
+
+          # 4. Force push to AtomGit Master
+          git remote add atomgit "https://$AG_USER:$AG_TOKEN@atomgit.com/$AG_USER/$AG_REPO.git"
+          git push -f atomgit master:master
