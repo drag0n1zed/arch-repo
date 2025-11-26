@@ -49,7 +49,7 @@ jobs:
 
           set -euo pipefail
           # config
-          REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/repo-host/x86_64"
+          REPO_URL="https://github.com/${{ github.repository }}/releases/packages"
           REPO_NAME="drags-repo"
           PACKAGE_ROOT="packages"
     
