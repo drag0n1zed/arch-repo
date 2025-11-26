@@ -166,8 +166,9 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p repo/x86_64
-          REPO_URL="https://raw.githubusercontent.com/${{ github.repository }}/repo-host/x86_64"
-          echo "Fetching existing DB from $REPO_URL"
+          https://github.com/drag0n1zed/arch-repo/releases/download/packages/gephgui-wry-git-r324.97d20c8-1-x86_64.pkg.tar.zst
+          REPO_URL="https://github.com/${{ github.repository }}/releases/download/packages"
+          echo "Fetching existing DB from $REPO_URL" 
           
           # Download db.tar.zst and save as .db (repo-add requirement)
           curl -L -f -o repo/x86_64/drags-repo.db.tar.zst "$REPO_URL/drags-repo.db.tar.zst" || echo "First run or DB missing."
@@ -187,28 +188,12 @@ jobs:
             repo-add -n -R drags-repo.db.tar.zst *.pkg.tar.zst
           fi
       
-      - name: Upload binaries to Release
+      - name: Upload repo to GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: packages
           name: "Package Repository"
-          files: repo/x86_64/*.pkg.tar.zst
+          files: |
+            repo/x86_64/*
+            index.html
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Clean and Prepare
-        run: |
-          # Delete the heavy binaries so they don't bloat the git repo
-          rm repo/x86_64/*.pkg.tar.zst
-          rm repo/x86_64/*.pkg.tar.zst.sig || true
-          
-          # Copy index.html to the deploy folder
-          cp index.html repo/index.html || echo "No index.html found, skipping."
-      
-      - name: Push DB & Site
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./repo
-          publish_branch: repo-host
-          force_orphan: true
-          commit_message: "Update repo database [skip ci]"
