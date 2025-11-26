@@ -101,7 +101,7 @@ jobs:
             printf "  - %s\n" "${TO_BUILD[@]}"
 
             # Create a JSON array of package directories for the GitHub Actions matrix.
-            json_matrix=$(printf '%s\n' "${TO_BUILD[@]}" | jq -R . | jq -s)
+            json_matrix=$(printf '%s\n' "${TO_BUILD[@]}" | jq -R . | jq -sc)
             echo "matrix=${json_matrix}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -119,8 +119,6 @@ jobs:
     steps:
       - name: Prep environment
         run: |
-          pacman-key --init
-          pacman-key --populate archlinux
           pacman -Syu --noconfirm base-devel git sudo
 
       - name: Checkout repository
